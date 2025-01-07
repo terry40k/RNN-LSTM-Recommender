@@ -39,14 +39,14 @@ The notebook utilizes a custom dataset with 13 features.
 - An item_info dictionary that maps each item ID to a tuple (model_number, model_description_1, model_description_2) with an rnn_recommended_items function that retrieves the top-K predictions and returns descriptions for each recommended item
 
 # Ranking Metrics
-- We use evaluate_rnn_ranking to calculates top-K metrics like Hit Rate, MRR, and NDCG
+- We use the evaluate_rnn_ranking function to calculate the top-K metrics like Hit Rate, MRR (Mean Reciprocal Rank), and NDCG (Normalized Discounted Cumulative Gain)
 - Hit Rate measures the proportion of customers who receive at least one relevant recommendation within the top K items recommended by the model.  For our model, we want to see at least one relevant item within the top 5 recommendations.  The higher the number, the higher percentage of customers that see a relevant item within the top 5
 - MRR measures how quickly the first relevant item appears in our recommended list.  The higher the number, the more effective our model’s at placing the most appealing or relevant items near the top 5 recommendations
 - NDCG not only measures the relevance of the item but also assesses the position of where that item is in the recommended list.  A higher score means the model’s suggesting the more relevant items higher up the list.  This is particularly useful for cases where the overall ranking quality of multiple relevant items is important.
 
 # Hyperparameters
 - I probably should've defined the hyperparameters up front so you spend less time editing different places of the code.  For now,  look for the below variables
-- Feel free to adjust these parameters to your liking.  You may want to experiment using a larger batch size (e.g. 64 or 128) and increase your embedding and hidden state dimensions (e.g. 128, 256, or even 512) so you have a better and larger representation of your data.  Useful if you have the hardware and/or compute units for GPU acceleration.  You may also start with a lower epoch threshold as it can take time to train the model, especially when we increase dimensions and the number of LSTM layers
+- Feel free to adjust these parameters to your liking.  You may want to experiment using a larger batch size (e.g. 64 or 128) and increase your embedding and hidden state dimensions (e.g. 128, 256, or even 512) so you have a better and larger representation of your data.  Useful if you have the hardware and/or compute units for GPU acceleration.  You may also start with a lower epoch threshold as it can take time to train the model, especially when we increase dimensions and the number of LSTM layers.  Increase your dropout if the model's learning your training data too well
 
 - ```max_seq_len``` (this is the maximum number of items in a sequence)
 - ```embed_dim``` (how large the representation is for each sequence)
@@ -64,4 +64,4 @@ for epoch in range(10):
 
 # Optimizer Settings
 - Uses the Adam optimizer with a learning rate of ```1e-4```
-- You may want to experiment with different learning rates (e.g. the default 1e-3) until you find a good convergence point
+- You may want to experiment with different learning rates (e.g. the default ```1e-3```) until you find a good convergence point
