@@ -1,0 +1,37 @@
+item_info = {}
+for _, row in df.iterrows():
+    it_id = item2id.get(row['model_number'])
+    if it_id is not None:
+        model_desc_1 = row['model_description_1'] if 'model_description_1' in row else ''
+        model_desc_2 = row['model_description_2'] if 'model_description_2' in row else ''
+        item_info[it_id] = (row['model_number'], model_desc_1, model_desc_2)
+
+def rnn_recommended_items(model, recent_items, top_k=5):
+    model.eval()
+    recent_ids = [item2id[i] for i in recent_items if i in item2id]
+    inp = truncate_pad(recent_ids, max_seq_len)
+    inp = torch.tensor([inp], dtype=torch.long, device=device)
+
+    with torch.no_grad():
+        logits = model(inp)
+        probs = torch.softmax(logits, dim=-1)
+        top_vals, top_inds = torch.topk(probs, top_k)
+
+    recommendations = []
+    for idx in top_inds[0]:
+        item_id = idx.item()
+        if item_id in item_info:
+            model_num, desc1, desc2 = item_info[item_id]
+            recommendations.append((model_num, desc1, desc2))
+        else:
+            # fallback if no info found
+            recommendations.append((id2item[item_id], "", ""))
+
+    return recommendations
+
+# Provide a sequence of model_numbers:
+recent_history = [""]
+rnn_recs = rnn_recommended_items(rnn_model, recent_history, top_k=5)
+
+for model_num, d1, d2 in rnn_recs:
+    print(f"Recommended: {model_num} | {d1} | {d2}")
