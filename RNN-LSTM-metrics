@@ -1,0 +1,41 @@
+############################################
+# Metric rankings for Hit Rate, MRR, and NDCG
+############################################
+
+def hitrate_rank(ranks, k):
+    hits = [1 if (r is not None and r <= k) else 0 for r in ranks]
+    return sum(hits) / len(hits) if len(hits) > 0 else 0.0
+
+def mrr_rank(ranks, k):
+    mrrs = [(1.0 / r if (r is not None and r <= k) else 0) for r in ranks]
+    return sum(mrrs) / len(mrrs) if len(mrrs) > 0 else 0.0
+
+def ndcg_rank(ranks, k):
+    ndcgs = [(1.0 / math.log2(r+1) if (r is not None and r <= k) else 0) for r in ranks]
+    return sum(ndcgs) / len(ndcgs) if len(ndcgs) > 0 else 0.0
+
+# Evaluation function for RNN model
+def evaluate_rnn_ranking(model, dataloader, k=5):
+    model.eval()
+    ranks = []
+    with torch.no_grad():
+        for inp, tgt in dataloader:
+            inp, tgt = inp.to(device), tgt.to(device)
+            logits = model(inp)
+            probs = torch.softmax(logits, dim=-1)
+            sorted_items = torch.argsort(probs, dim=-1, descending=True).cpu().numpy()
+            tgt = tgt.cpu().numpy()
+
+            for i in range(len(tgt)):
+                target_item = tgt[i]
+                ranked_list = sorted_items[i].tolist()
+                rank = ranked_list.index(target_item)+1 if target_item in ranked_list else None
+                ranks.append(rank)
+
+    hit = hitrate_rank(ranks, k)
+    mrr = mrr_rank(ranks, k)
+    ndcg = ndcg_rank(ranks, k)
+    return hit, mrr, ndcg
+
+hit5, mrr5, ndcg5 = evaluate_rnn_ranking(rnn_model, rnn_test_loader, k=5)
+print(f"RNN@5: Hit={hit5:.4f}, MRR={mrr5:.4f}, NDCG={ndcg5:.4f}")
