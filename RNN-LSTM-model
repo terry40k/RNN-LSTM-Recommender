@@ -1,0 +1,171 @@
+import pandas as pd
+import numpy as np
+import torch
+import math
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+import random
+
+############################################
+# Load and preprocess data
+############################################
+
+df = pd.read_csv(r'/content/drive/My Drive/RO_agreement_serialno.csv')
+df['agreement_date'] = pd.to_datetime(df['agreement_date'])
+df = df.sort_values(by=['account_number', 'agreement_date'])
+
+# Map model_number to IDs
+all_items = df['model_number'].unique()
+item2id = {item: i+1 for i, item in enumerate(all_items)}
+id2item = {v: k for k, v in item2id.items()}
+
+df['item_id'] = df['model_number'].map(item2id)
+
+############################################
+# Split into training, validation and test sets by time
+############################################
+
+df = df.sort_values('agreement_date')
+train_cutoff = df['agreement_date'].quantile(0.7)
+val_cutoff = df['agreement_date'].quantile(0.85)
+
+def assign_split(date):
+    if date <= train_cutoff:
+        return 'train'
+    elif date <= val_cutoff:
+        return 'val'
+    else:
+        return 'test'
+
+df['split'] = df['agreement_date'].apply(assign_split)
+
+############################################
+# Create User-Level Sequences
+############################################
+
+user2seq = {}
+for user, group in df.groupby('account_number'):
+    group = group.sort_values('agreement_date')
+    train_items = group[group['split']=='train']['item_id'].tolist()
+    val_items = group[group['split']=='val']['item_id'].tolist()
+    test_items = group[group['split']=='test']['item_id'].tolist()
+    user2seq[user] = {
+        'train': train_items,
+        'val': val_items,
+        'test': test_items
+    }
+
+def filter_sequences(seq_list):
+    return [s for s in seq_list if len(s) > 1]
+
+train_sequences = filter_sequences([v['train'] for v in user2seq.values()])
+val_sequences = filter_sequences([v['val'] for v in user2seq.values()])
+test_sequences = filter_sequences([v['test'] for v in user2seq.values()])
+
+num_items = len(item2id)
+max_seq_len = 50
+
+############################################
+# Dataset prep and next-item predictions
+############################################
+
+def truncate_pad(seq, max_len):
+    seq = seq[-max_len:]
+    if len(seq) < max_len:
+        seq = [0]*(max_len - len(seq)) + seq
+    return seq
+
+def build_rnn_samples(sequences):
+    samples = []
+    for seq in sequences:
+        for i in range(1, len(seq)):
+            input_seq = seq[:i]
+            target = seq[i]
+            input_seq = truncate_pad(input_seq, max_seq_len)
+            samples.append((input_seq, target))
+    return samples
+
+rnn_train_data = build_rnn_samples(train_sequences)
+rnn_val_data = build_rnn_samples(val_sequences)
+rnn_test_data = build_rnn_samples(test_sequences)
+
+class RNNDataset(Dataset):
+    def __init__(self, data):
+        self.data = data
+    def __len__(self):
+        return len(self.data)
+    def __getitem__(self, idx):
+        inp, tgt = self.data[idx]
+        return torch.tensor(inp, dtype=torch.long), torch.tensor(tgt, dtype=torch.long)
+
+rnn_train_loader = DataLoader(RNNDataset(rnn_train_data), batch_size=64, shuffle=True)
+rnn_val_loader = DataLoader(RNNDataset(rnn_val_data), batch_size=64, shuffle=False)
+rnn_test_loader = DataLoader(RNNDataset(rnn_test_data), batch_size=64, shuffle=False)
+
+############################################
+# Define Model
+############################################
+
+class RNNModel(nn.Module):
+    def __init__(self, num_items, embed_dim=256, hidden_dim=1024, num_layers=2, dropout=0.2):
+        super(RNNModel, self).__init__()
+        self.embedding = nn.Embedding(num_items+2, embed_dim, padding_idx=0)
+        self.lstm = nn.LSTM(embed_dim, hidden_dim, num_layers=num_layers, dropout=dropout, batch_first=True)
+        self.dropout = nn.Dropout(dropout)
+        self.fc = nn.Linear(hidden_dim, num_items+1)
+
+    def forward(self, input_seq):
+        x = self.embedding(input_seq)
+        x = self.dropout(x)
+        # h, c states not needed explicitly, _, (h, _) can be used
+        _, (h, _) = self.lstm(x)  # h: (num_layers, batch, hidden_dim)
+        h = h[-1]  # take the top layer's hidden state
+        h = self.dropout(h)
+        logits = self.fc(h)
+        return logits
+
+############################################
+# Training and evaluation functions
+############################################
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+def train_rnn(model, dataloader, optimizer, criterion):
+    model.train()
+    total_loss = 0
+    for inp, tgt in dataloader:
+        inp, tgt = inp.to(device), tgt.to(device)
+        optimizer.zero_grad()
+        logits = model(inp)  # (batch, num_items+1)
+        loss = criterion(logits, tgt)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    return total_loss / len(dataloader)
+
+def evaluate_rnn(model, dataloader, criterion):
+    model.eval()
+    total_loss = 0
+    with torch.no_grad():
+        for inp, tgt in dataloader:
+            inp, tgt = inp.to(device), tgt.to(device)
+            logits = model(inp)
+            loss = criterion(logits, tgt)
+            total_loss += loss.item()
+    return total_loss / len(dataloader)
+
+############################################
+# Instantiate and train model
+############################################
+
+rnn_model = RNNModel(num_items).to(device)
+rnn_optimizer = torch.optim.Adam(rnn_model.parameters(), lr=1e-4)
+rnn_criterion = nn.CrossEntropyLoss(ignore_index=0)
+
+for epoch in range(10):
+    train_loss = train_rnn(rnn_model, rnn_train_loader, rnn_optimizer, rnn_criterion)
+    val_loss = evaluate_rnn(rnn_model, rnn_val_loader, rnn_criterion)
+    print(f"[RNN] Epoch {epoch+1}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}")
+
+rnn_test_loss = evaluate_rnn(rnn_model, rnn_test_loader, rnn_criterion)
+print(f"[RNN] Test Loss={rnn_test_loss:.4f}")
